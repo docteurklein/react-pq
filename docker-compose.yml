@@ -1,0 +1,14 @@
+version: '3.3'
+
+services:
+    postgres:
+        image: postgres:9.6-alpine
+
+    tests:
+        build: .
+        depends_on:
+            - postgres
+        command: bash bin/test
+        volumes:
+            - ./:/usr/src/app
+

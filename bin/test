@@ -1,0 +1,1 @@
+test "$(php examples/cli.php|md5sum)" == "89ef4169c2b1c3ad128df5eef7913516  -"
