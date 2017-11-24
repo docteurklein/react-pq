@@ -2,7 +2,7 @@
 
 namespace ReactPq;
 
-use pq;
+use pq\Connection;
 use React\EventLoop\LoopInterface;
 use React\Stream\ThroughStream;
 
@@ -10,6 +10,13 @@ final Class Client
 {
     private $loop;
     private $dsn;
+
+    const polling_types = [
+        Connection::POLLING_FAILED  => 'Connection::POLLING_FAILED',
+        Connection::POLLING_READING => 'Connection::POLLING_READING',
+        Connection::POLLING_WRITING => 'Connection::POLLING_WRITING',
+        Connection::POLLING_OK      => 'Connection::POLLING_OK',
+    ];
 
     public function __construct(LoopInterface $loop, string $dsn)
     {
@@ -19,41 +26,44 @@ final Class Client
 
     public function query(string $query, array $params = [], array $types = [], callable $transform = null)
     {
-        $c = new pq\Connection($this->dsn, pq\Connection::ASYNC);
-        $c->defaultAutoConvert = 0;
-        $c->unbuffered = true;
+        $c = new Connection($this->dsn, Connection::ASYNC);
+        $c->defaultAutoConvert = 0; // no auto convert ? // TODO configurable
+        $c->unbuffered = true; // very important for per-row streaming
 
         $stream = new ThroughStream($transform);
 
         $this->loop->addReadStream($c->socket, function($socketStream) use($c, $stream) {
-            $result = $c->getResult();
-            if (!$result) {
-                return $stream->end();
-            }
-            $row = $result->fetchRow();
-            $stream->write($row);
+            $this->pipeResult($c, $stream);
         });
 
-        $this->pollConnectionStatus($c, function() use($c, $query, $params, $types) {
-            $c->execParamsAsync($query, $params, $types);
+        $this->loop->addWriteStream($c->socket, function($socketStream) use($c, $stream) {
+            $this->pipeResult($c, $stream);
         });
+
+        $this->exec($c, $query, $params, $types);
 
         return $stream;
     }
 
-    private function pollConnectionStatus($c, callable $then)
+    private function pipeResult($c, $stream)
     {
-        $this->loop->futureTick(function() use($c, $then) {
+        $result = $c->getResult();
+        if (!$result) {
+            return;
+        }
+        $row = $result->fetchRow();
+        $stream->write($row);
+    }
+
+    private function exec($c, $query, $params, $types)
+    {
+        $this->loop->futureTick(function() use($c, $query, $params, $types) {
             $status = $c->poll();
-            switch ($status) {
-                case pq\Connection::POLLING_FAILED:
-                    throw new \Exception($c->errorMessage);
-                case pq\Connection::POLLING_OK:
-                    return $then();
-                default:
-                    return $this->pollConnectionStatus($c, $then);
+            if ($status === Connection::POLLING_OK) {
+                $c->execParamsAsync($query, $params, $types);
+                return;
             }
+            $this->exec($c, $query, $params, $types);
         });
     }
 }
-

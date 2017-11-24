@@ -2,7 +2,8 @@
     "require": {
         "react/event-loop": "^0.4.3",
         "react/stream": "^0.7.3",
-        "ext-pq": "*"
+        "ext-pq": "*",
+        "php": "^7.1"
     },
     "autoload": {
         "psr-4": {
